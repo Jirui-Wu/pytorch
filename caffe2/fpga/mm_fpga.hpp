@@ -1,12 +1,16 @@
 #ifndef MM_FPGA_H_
 #define MM_FPGA_H_
 
-#include "caffe/caffe.hpp"
-#include "caffe/fpga/mm_utils.hpp"
+//#include "caffe/caffe.hpp"
+//caffe.hpp includes other header files that needs to be included
+//here not sure
+#include "caffe2/core/common.h"
+
+#include "caffe2/fpga/mm_utils.hpp"
 #include "xcl2.hpp"
 #include "math.h"
 
-#include "caffe/fpga/AsyncProfiler.hpp"
+#include "caffe2/fpga/AsyncProfiler.hpp"
 
 #include <vector>
 
@@ -26,12 +30,12 @@
 
 void Kernel(
       int transA,
-      const float *aVecIn, 
+      const float *aVecIn,
       int transB,
-      const float *bVecIn, 
-      float *cVec, 
-      int aRow, 
-      int aCol, 
+      const float *bVecIn,
+      float *cVec,
+      int aRow,
+      int aCol,
       int bRow,
       int bCol,
       float ABscaling,
@@ -41,12 +45,12 @@ void Kernel(
 
 void Kernel_double_buff(
       int transA,
-      const float *aVecIn, 
+      const float *aVecIn,
       int transB,
-      const float *bVecIn, 
-      float *cVec, 
-      int aRow, 
-      int aCol, 
+      const float *bVecIn,
+      float *cVec,
+      int aRow,
+      int aCol,
       int bRow,
       int bCol,
       float ABscaling,
@@ -56,12 +60,12 @@ void Kernel_double_buff(
 
 void Kernel_double_ddr(
       int transA,
-      const float *aVecIn, 
+      const float *aVecIn,
       int transB,
-      const float *bVecIn, 
-      float *cVec, 
-      int aRow, 
-      int aCol, 
+      const float *bVecIn,
+      float *cVec,
+      int aRow,
+      int aCol,
       int bRow,
       int bCol,
       float ABscaling,
@@ -71,27 +75,27 @@ void Kernel_double_ddr(
 
 void Kernel_tiling(
     int transA,
-    const float *aVecIn, 
+    const float *aVecIn,
     int transB,
-    const float *bVecIn, 
-    float *cVecOut, 
-    int aRow, 
-    int aCol, 
+    const float *bVecIn,
+    float *cVecOut,
+    int aRow,
+    int aCol,
     int bRow,
     int bCol,
     float ABscaling,
     float Cscaling,
-    double *fpga_times  
+    double *fpga_times
 );
 
 void Kernel_profiling(
     int transA,
-    const float *aVecIn, 
+    const float *aVecIn,
     int transB,
-    const float *bVecIn, 
-    float *cVecOut, 
-    int aRow, 
-    int aCol, 
+    const float *bVecIn,
+    float *cVecOut,
+    int aRow,
+    int aCol,
     int bRow,
     int bCol,
     float ABscaling,
