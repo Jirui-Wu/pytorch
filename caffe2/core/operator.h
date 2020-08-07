@@ -1405,6 +1405,28 @@ C10_DECLARE_REGISTRY(
 #define REGISTER_CUDNN_OPERATOR(name, ...) \
   REGISTER_CUDA_OPERATOR_WITH_ENGINE(name, CUDNN, __VA_ARGS__)
 
+//Macros for FPGA operator
+C10_DECLARE_REGISTRY(
+    FPGAOperatorRegistry,
+    OperatorBase,
+    const OperatorDef&,
+    Workspace*);
+#define REGISTER_FPGA_OPERATOR_CREATOR(key, ...) \
+  C10_REGISTER_CREATOR(FPGAOperatorRegistry, key, __VA_ARGS__)
+#define REGISTER_FPGA_OPERATOR(name, ...)                           \
+  C10_IMPORT void CAFFE2_PLEASE_ADD_OPERATOR_SCHEMA_FOR_##name();   \
+  static void CAFFE2_UNUSED CAFFE_ANONYMOUS_VARIABLE_FPGA##name() { \
+    CAFFE2_PLEASE_ADD_OPERATOR_SCHEMA_FOR_##name();                 \
+  }                                                                 \
+  C10_REGISTER_CLASS(FPGAOperatorRegistry, name, __VA_ARGS__)
+#define REGISTER_FPGA_OPERATOR_STR(str_name, ...) \
+  C10_REGISTER_TYPED_CLASS(FPGAOperatorRegistry, str_name, __VA_ARGS__)
+#define REGISTER_FPGA_OPERATOR_WITH_ENGINE(name, engine, ...) \
+  C10_REGISTER_CLASS(FPGAOperatorRegistry, name##_ENGINE_##engine, __VA_ARGS__)
+// Macros for cudnn since we use it often
+#define REGISTER_CUDNN_OPERATOR(name, ...) \
+  REGISTER_FPGA_OPERATOR_WITH_ENGINE(name, CUDNN, __VA_ARGS__)
+
 // Macros for HIP operators
 C10_DECLARE_REGISTRY(
     HIPOperatorRegistry,
