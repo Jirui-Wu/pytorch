@@ -37,10 +37,10 @@
 #include <process.h>
 #endif
 
-//added here
-#ifdef CAFFE2_USE_XCL
+
+///////////////////////////////////NEWADDED///////////////////////////////////////////////
+
 #include "caffe2/fpga/xcl2.hpp"
-#endif // CAFFE2_USE_XCL
 
 //the below are from math_functions.cpp from caffe
 //this form is from the std library so it's fine?
@@ -48,6 +48,7 @@
 #include <boost/random.hpp>
 #include <limits>
 #include <fstream>
+#include "caffe2/fpga/mm_fpga.hpp"//the kernel implementation
 //these are from caffe, replacement in caffe2?
 //#include "caffe/common.hpp"
 //#include "caffe/util/math_functions.hpp"
@@ -56,6 +57,9 @@
 //this is for timer
 //from https://github.com/pytorch/pytorch/blob/master/caffe2/core/timer.h
 #include "caffe2/core/timer.h"
+//////////////////////////////////////////////////////////////////////////////////
+
+
 
 namespace caffe2 {
 
@@ -67,7 +71,6 @@ namespace math {
 // will delegate the Caffe math functions that are BLAS-related to either the
 // CBLAS call or the Eigen implementation.
 ////////////////////////////////////////////////////////////////////////////////
-#ifdef CAFFE2_USE_EIGEN_FOR_BLAS
 
 // Caffe2 gemm provides a simpler interface to the gemm functions, with the
 // limitation that the data has to be contiguous in memory.
@@ -84,6 +87,156 @@ namespace math {
 // the matrix multiply; depending on the flags set, op(A) is equal to A or A^T
 // (transpose) if the argument TransA or TransB is set to CblasNoTrans or
 // CblasTrans, respectively, for each of A and B.
+
+#ifdef CAFFE2_USE_MKL//in this code WITH KERNEL cblas_sgemm is used
+template <>
+C10_EXPORT void Gemm<float, FPGAContext>(
+    const CBLAS_TRANSPOSE trans_A,
+    const CBLAS_TRANSPOSE trans_B,
+    const int M,
+    const int N,
+    const int K,
+    const float alpha,
+    const float* A,
+    const float* B,
+    const float beta,
+    float* C,
+    FPGAContext* context,
+    TensorProto::DataType math_type){
+      //HERE FROM caffe_fpga/src/caffe/util/math_functions.cpp
+      //headers and dependencies are added at the beginning, unsure whether it's complete
+    #ifdef PROFILING
+    std::ofstream profilingLog;
+    profilingLog.open("/home/centos/src/project_data/caffe/huawei_proj/profile/log.csv", ios::app);
+
+    profilingLog << TILE_ROW << "," << TILE_COL << "," << TILE_COMMON << "," << M << "," << N << "," << K << ",";
+
+    //this is changed from caffe_fpga, max is now 1, any problems? -111?
+    // MKL expects ld? >= 1
+    const int lda = std::max((trans_A == CblasNoTrans) ? K : M, 1);
+    const int ldb = std::max((trans_B == CblasNoTrans) ? N : K, 1);
+    // int lda = (TransA == CblasNoTrans) ? K : M;
+    // int ldb = (TransB == CblasNoTrans) ? N : K;
+
+    caffe2::Timer cpu;
+    double cpu_time = 0.0;
+    cpu.Start();
+
+    cblas_sgemm(CblasRowMajor, TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, N);
+
+    cpu_time += cpu.MicroSeconds();
+    profilingLog << cpu_time / 1000.0 << ",";
+
+    float cBlas[N*M];
+    for (int i=0; i<M; i++)
+    {
+        for (int j=0; j<N; j++)
+        {
+            cBlas[i*N + j] = C[i*N+j];
+        }
+    }
+    #endif
+
+    double fpga_times[4];
+
+    #ifdef SIMULATE_BATCHING
+    Kernel_profiling(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta);
+    exit(EXIT_SUCCESS);
+    #else
+
+    Kernel(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta, fpga_times);
+    // Kernel_double_buff(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta, fpga_times);
+    // Kernel_tiling(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta, fpga_times);
+    // Kernel_double_ddr(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta, fpga_times);
+
+    #endif
+
+    #ifdef PROFILING
+
+    #ifdef PROFILING_TIME
+    double total_time = 0.0;
+    for (unsigned i=0; i<4; i++)
+    {
+        total_time += fpga_times[i];
+    }
+    profilingLog << fpga_times[0] << "," << fpga_times[1] << "," << fpga_times[2] << "," << fpga_times[3] << "," << total_time << ",";
+    #endif
+
+    double mse = 0;
+    for (int i=0; i<M; i++)
+    {
+        for (int j=0; j<N; j++)
+        {
+    	    mse += std::pow(std::fabs(cBlas[i*N+j] - C[i*N+j]) ,2);
+        }
+    }
+    mse /= (N*M);
+
+    profilingLog << mse << std::endl;
+    // LOG(INFO) << "MSE = " << mse;
+
+    profilingLog.close();
+    #endif
+    }
+
+    template <>
+    C10_EXPORT void GemmEx<float, CPUContext>(
+        const CBLAS_TRANSPOSE trans_A,
+        const CBLAS_TRANSPOSE trans_B,
+        const int M,
+        const int N,
+        const int K,
+        const float alpha,
+        const float* A,
+        const int lda,
+        const float* B,
+        const int ldb,
+        const float beta,
+        float* C,
+        const int ldc,
+        CPUContext* /*context*/) {
+      cblas_sgemm(
+          CblasRowMajor,
+          trans_A,
+          trans_B,
+          M,
+          N,
+          K,
+          alpha,
+          A,
+          lda,
+          B,
+          ldb,
+          beta,
+          C,
+          ldc);
+    }
+
+    template <>
+    C10_EXPORT void Gemv<float, CPUContext>(
+        const CBLAS_TRANSPOSE trans_A,
+        const int M,
+        const int N,
+        const float alpha,
+        const float* A,
+        const float* x,
+        const float beta,
+        float* y,
+        CPUContext* /*context*/,
+        TensorProto::DataType /*math_type*/) {
+      cblas_sgemv(CblasRowMajor, trans_A, M, N, alpha, A, N, x, 1, beta, y, 1);
+    }
+
+    #define CAFFE2_SPECIALIZED_DOT(T, prefix)                       \
+      template <>                                                   \
+      C10_EXPORT void Dot<T, CPUContext>(                           \
+          const int N, const T* a, const T* b, T* y, CPUContext*) { \
+        *y = cblas_##prefix##dot(N, a, 1, b, 1);                    \
+      }
+    CAFFE2_SPECIALIZED_DOT(float, s)
+    #undef CAFFE2_SPECIALIZED_DOT
+
+#else //under CAFFE2_USE_MKL, should be the case that CAFFE2_USE_EIGEN_FOR_BLAS
 template <>
 C10_EXPORT void Gemm<float, CPUContext>(
     const CBLAS_TRANSPOSE trans_A,
@@ -265,99 +418,6 @@ C10_EXPORT void Gemv<float, CPUContext>(
 CAFFE2_SPECIALIZED_DOT(float)
 #undef CAFFE2_SPECIALIZED_DOT
 
-#else // CAFFE2_USE_EIGEN_FOR_BLAS
-
-template <>
-C10_EXPORT void Gemm<float, CPUContext>(
-    const CBLAS_TRANSPOSE trans_A,
-    const CBLAS_TRANSPOSE trans_B,
-    const int M,
-    const int N,
-    const int K,
-    const float alpha,
-    const float* A,
-    const float* B,
-    const float beta,
-    float* C,
-    CPUContext* /*context*/,
-    TensorProto::DataType /*math_type*/) {
-  // MKL expects ld? >= 1
-  const int lda = std::max((trans_A == CblasNoTrans) ? K : M, 1);
-  const int ldb = std::max((trans_B == CblasNoTrans) ? N : K, 1);
-  cblas_sgemm(
-      CblasRowMajor,
-      trans_A,
-      trans_B,
-      M,
-      N,
-      K,
-      alpha,
-      A,
-      lda,
-      B,
-      ldb,
-      beta,
-      C,
-      N);
-}
-
-template <>
-C10_EXPORT void GemmEx<float, CPUContext>(
-    const CBLAS_TRANSPOSE trans_A,
-    const CBLAS_TRANSPOSE trans_B,
-    const int M,
-    const int N,
-    const int K,
-    const float alpha,
-    const float* A,
-    const int lda,
-    const float* B,
-    const int ldb,
-    const float beta,
-    float* C,
-    const int ldc,
-    CPUContext* /*context*/) {
-  cblas_sgemm(
-      CblasRowMajor,
-      trans_A,
-      trans_B,
-      M,
-      N,
-      K,
-      alpha,
-      A,
-      lda,
-      B,
-      ldb,
-      beta,
-      C,
-      ldc);
-}
-
-template <>
-C10_EXPORT void Gemv<float, CPUContext>(
-    const CBLAS_TRANSPOSE trans_A,
-    const int M,
-    const int N,
-    const float alpha,
-    const float* A,
-    const float* x,
-    const float beta,
-    float* y,
-    CPUContext* /*context*/,
-    TensorProto::DataType /*math_type*/) {
-  cblas_sgemv(CblasRowMajor, trans_A, M, N, alpha, A, N, x, 1, beta, y, 1);
-}
-
-#define CAFFE2_SPECIALIZED_DOT(T, prefix)                       \
-  template <>                                                   \
-  C10_EXPORT void Dot<T, CPUContext>(                           \
-      const int N, const T* a, const T* b, T* y, CPUContext*) { \
-    *y = cblas_##prefix##dot(N, a, 1, b, 1);                    \
-  }
-CAFFE2_SPECIALIZED_DOT(float, s)
-#undef CAFFE2_SPECIALIZED_DOT
-
 #endif // CAFFE2_USE_EIGEN_FOR_BLAS
 
 template <>
@@ -425,7 +485,16 @@ C10_EXPORT void GemmStridedBatched<float, CPUContext>(
     const int C_stride,
     CPUContext* context,
     TensorProto::DataType /* math_type */) {
-#ifdef CAFFE2_USE_MKL
+#ifdef CAFFE2_USE_XCL
+// loop over matrices in the batch
+for (int i = 0; i < batch_size; ++i) {
+  math::Gemm<float, FPGAContext>(
+    trans_A, trans_B, M, N, K, alpha, A, B, beta, C, context);
+  A += A_stride;
+  B += B_stride;
+  C += C_stride;
+}
+#elif CAFFE2_USE_MKL
   (void)context;
   // MKL expects ld? >= 1
   const int lda = std::max((trans_A == CblasNoTrans) ? K : M, 1);
