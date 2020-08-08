@@ -1,8 +1,4 @@
-// Implements the math functions for FPGA.
-
-// This implementation uses math_cpu as a template
-//eigen is replaced by fpga kernel
-//mkl is kept as it works on fpga
+// Based on math_cpu, changed kernel for gemm to allow fpga
 
 #include "caffe2/utils/math.h"
 
@@ -29,27 +25,6 @@
 #include "Eigen/Core"
 #include "Eigen/Dense"
 
-#include "caffe2/fpga/xcl2.hpp"
-
-//the below are from math_functions.cpp from caffe
-//this form is from the std library so it's fine?
-#include <boost/math/special_functions/next.hpp>
-#include <boost/random.hpp>
-
-#include <limits>
-#include <fstream>
-
-//#include "caffe/common.hpp"
-//#include "caffe/util/rng.hpp"
-#include "caffe2/fpga/mm_fpga.hpp"
-//these are from caffe, replacement in caffe2?
-
-//for timer
-#include "caffe2/core/timer.h"
-//make this public as it's used, any problem?
-#include <mkl.h>
-
-
 #ifdef CAFFE2_USE_MKL
 #include <mkl.h>
 #endif // CAFFE2_USE_MKL
@@ -61,6 +36,29 @@
 #if defined(_MSC_VER)
 #include <process.h>
 #endif
+
+//added here, not sure whether to make it global or not
+#ifdef CAFFE2_USE_XCL
+#include "caffe2/fpga/xcl2.hpp"
+#endif // CAFFE2_USE_XCL
+
+//make it global
+#include "caffe2/fpga/xcl2.hpp"
+
+//the below are from math_functions.cpp from caffe
+//this form is from the std library so it's fine?
+#include <boost/math/special_functions/next.hpp>
+#include <boost/random.hpp>
+#include <limits>
+#include <fstream>
+//these are from caffe, replacement in caffe2?
+//#include "caffe/common.hpp"
+//#include "caffe/util/math_functions.hpp"
+//#include "caffe/util/rng.hpp"
+
+//this is for timer
+//from https://github.com/pytorch/pytorch/blob/master/caffe2/core/timer.h
+#include "caffe2/core/timer.h"
 
 namespace caffe2 {
 
@@ -101,85 +99,138 @@ C10_EXPORT void Gemm<float, FPGAContext>(
     const float* B,
     const float beta,
     float* C,
+    FPGAContext* context,
+    TensorProto::DataType math_type){
+      //HERE FROM caffe_fpga/src/caffe/util/math_functions.cpp
+      //header
+    #ifdef PROFILING
+    std::ofstream profilingLog;
+    profilingLog.open("/home/centos/src/project_data/caffe/huawei_proj/profile/log.csv", ios::app);
+
+    profilingLog << TILE_ROW << "," << TILE_COL << "," << TILE_COMMON << "," << M << "," << N << "," << K << ",";
+
+    int lda = (TransA == CblasNoTrans) ? K : M;
+    int ldb = (TransB == CblasNoTrans) ? N : K;
+
+    caffe::Timer cpu;
+    double cpu_time = 0.0;
+    cpu.Start();
+
+    cblas_sgemm(CblasRowMajor, TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, N);
+
+    cpu_time += cpu.MicroSeconds();
+    profilingLog << cpu_time / 1000.0 << ",";
+
+    float cBlas[N*M];
+    for (int i=0; i<M; i++)
+    {
+        for (int j=0; j<N; j++)
+        {
+            cBlas[i*N + j] = C[i*N+j];
+        }
+    }
+    #endif
+
+    double fpga_times[4];
+
+    #ifdef SIMULATE_BATCHING
+    Kernel_profiling(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta);
+    exit(EXIT_SUCCESS);
+    #else
+
+    Kernel(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta, fpga_times);
+    // Kernel_double_buff(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta, fpga_times);
+    // Kernel_tiling(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta, fpga_times);
+    // Kernel_double_ddr(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta, fpga_times);
+
+    #endif
+
+    #ifdef PROFILING
+
+    #ifdef PROFILING_TIME
+    double total_time = 0.0;
+    for (unsigned i=0; i<4; i++)
+    {
+        total_time += fpga_times[i];
+    }
+    profilingLog << fpga_times[0] << "," << fpga_times[1] << "," << fpga_times[2] << "," << fpga_times[3] << "," << total_time << ",";
+    #endif
+
+    double mse = 0;
+    for (int i=0; i<M; i++)
+    {
+        for (int j=0; j<N; j++)
+        {
+    	    mse += std::pow(std::fabs(cBlas[i*N+j] - C[i*N+j]) ,2);
+        }
+    }
+    mse /= (N*M);
+
+    profilingLog << mse << std::endl;
+    // LOG(INFO) << "MSE = " << mse;
+
+    profilingLog.close();
+    #endif
+    }
+
+template <>
+C10_EXPORT void Gemm<float, CPUContext>(
+    const CBLAS_TRANSPOSE trans_A,
+    const CBLAS_TRANSPOSE trans_B,
+    const int M,
+    const int N,
+    const int K,
+    const float alpha,
+    const float* A,
+    const float* B,
+    const float beta,
+    float* C,
     CPUContext* context,
     TensorProto::DataType math_type) {
-      //HERE FROM caffe_fpga/src/caffe/util/math_functions.cpp
-      #ifdef PROFILING
-      std::ofstream profilingLog;
-      profilingLog.open("/home/centos/src/project_data/caffe/huawei_proj/profile/log.csv", ios::app);
-
-      profilingLog << TILE_ROW << "," << TILE_COL << "," << TILE_COMMON << "," << M << "," << N << "," << K << ",";
-
-      // int lda = (TransA == CblasNoTrans) ? K : M;
-      // int ldb = (TransB == CblasNoTrans) ? N : K;
-      //
-      // caffe::Timer cpu;
-
-      //changed here, min is now 1, any problem with -111?
-      //const int in this case?
-      // MKL expects ld? >= 1
-      const int lda = std::max((trans_A == CblasNoTrans) ? K : M, 1);
-      const int ldb = std::max((trans_B == CblasNoTrans) ? N : K, 1);
-
-      caffe2::Timer cpu;
-      double cpu_time = 0.0;
-      cpu.Start();
-      //checked, this is the same as the mkl implementation
-      cblas_sgemm(CblasRowMajor, TransA, TransB, M, N, K, alpha, A, lda, B, ldb, beta, C, N);
-
-      cpu_time += cpu.MicroSeconds();
-      profilingLog << cpu_time / 1000.0 << ",";
-
-      float cBlas[N*M];
-      for (int i=0; i<M; i++)
-      {
-          for (int j=0; j<N; j++)
-          {
-              cBlas[i*N + j] = C[i*N+j];
-          }
+  auto C_mat = EigenMatrixMap<float>(C, N, M);
+  if (beta == 0) {
+    C_mat.setZero();
+  } else {
+    C_mat *= beta;
+  }
+  switch (trans_A) {
+    case CblasNoTrans: {
+      switch (trans_B) {
+        case CblasNoTrans:
+          C_mat.noalias() += alpha *
+              (ConstEigenMatrixMap<float>(B, N, K) *
+               ConstEigenMatrixMap<float>(A, K, M));
+          return;
+        case CblasTrans:
+          C_mat.noalias() += alpha *
+              (ConstEigenMatrixMap<float>(B, K, N).transpose() *
+               ConstEigenMatrixMap<float>(A, K, M));
+          return;
+        default:
+          LOG(FATAL) << "Unexpected CBLAS_TRANSPOSE for trans_B";
+          return;  // The line above calls `abort()`. Should never reach here.
       }
-      #endif
-
-      double fpga_times[4];
-
-      #ifdef SIMULATE_BATCHING
-      Kernel_profiling(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta);
-      exit(EXIT_SUCCESS);
-      #else
-
-      Kernel(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta, fpga_times);
-      // Kernel_double_buff(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta, fpga_times);
-      // Kernel_tiling(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta, fpga_times);
-      // Kernel_double_ddr(TransA - 111, A, TransB - 111, B, C, M, K, K, N, alpha, beta, fpga_times);
-
-      #endif
-
-      #ifdef PROFILING
-
-      #ifdef PROFILING_TIME
-      double total_time = 0.0;
-      for (unsigned i=0; i<4; i++)
-      {
-          total_time += fpga_times[i];
+    }
+    case CblasTrans: {
+      switch (trans_B) {
+        case CblasNoTrans:
+          C_mat.noalias() += alpha *
+              (ConstEigenMatrixMap<float>(B, N, K) *
+               ConstEigenMatrixMap<float>(A, M, K).transpose());
+          return;
+        case CblasTrans:
+          C_mat.noalias() += alpha *
+              (ConstEigenMatrixMap<float>(B, K, N).transpose() *
+               ConstEigenMatrixMap<float>(A, M, K).transpose());
+          return;
+        default:
+          LOG(FATAL) << "Unexpected CBLAS_TRANSPOSE for trans_B";
+          return;  // The line above calls `abort()`. Should never reach here.
       }
-      profilingLog << fpga_times[0] << "," << fpga_times[1] << "," << fpga_times[2] << "," << fpga_times[3] << "," << total_time << ",";
-      #endif
-
-      double mse = 0;
-      for (int i=0; i<M; i++)
-      {
-          for (int j=0; j<N; j++)
-          {
-      	    mse += std::pow(std::fabs(cBlas[i*N+j] - C[i*N+j]) ,2);
-          }
-      }
-      mse /= (N*M);
-
-      profilingLog << mse << std::endl;
-      // LOG(INFO) << "MSE = " << mse;
-
-      profilingLog.close();
-      #endif
+    }
+    default:
+      LOG(FATAL) << "Unexpected CBLAS_TRANSPOSE for trans_A";
+  }
 }
 
 template <>
@@ -463,7 +514,16 @@ C10_EXPORT void GemmStridedBatched<float, CPUContext>(
     const int C_stride,
     CPUContext* context,
     TensorProto::DataType /* math_type */) {
-#ifdef CAFFE2_USE_MKL
+#ifdef CAFFE2_USE_XCL
+// loop over matrices in the batch
+for (int i = 0; i < batch_size; ++i) {
+  math::Gemm<float, FPGAContext>(
+    trans_A, trans_B, M, N, K, alpha, A, B, beta, C, context);
+  A += A_stride;
+  B += B_stride;
+  C += C_stride;
+}
+#elif CAFFE2_USE_MKL
   (void)context;
   // MKL expects ld? >= 1
   const int lda = std::max((trans_A == CblasNoTrans) ? K : M, 1);
