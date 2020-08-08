@@ -1,12 +1,12 @@
-#include "caffe2/operators/fpga_gemm_op.h"
+FPGA#include "caffe2/operators/fpga_gemm_op.h"
 #include "caffe2/fpga/xcl2.hpp"
 //need to ask how fpga works, is this header file enough?
 
 namespace caffe2 {
 
-REGISTER_FPGA_OPERATOR(BatchMatMul, BatchMatMulOp<FPGAContext>);
+REGISTER_FPGA_OPERATOR(FPGAMatMul, FPGAMatMulOp<FPGAContext>);
 
-vector<TensorShape> TensorInferenceForBatchMatMul(
+vector<TensorShape> TensorInferenceForFPGAMatMul(
     const OperatorDef& def,
     const vector<TensorShape>& in) {
   ArgumentHelper helper(def);
@@ -89,16 +89,16 @@ vector<TensorShape> TensorInferenceForBatchMatMul(
   }
 }
 
-OpSchema::Cost CostInferenceForBatchMatMul(
+OpSchema::Cost CostInferenceForFPGAMatMul(
     const OperatorDef& def,
     const vector<TensorShape>& in) {
-  CAFFE_ENFORCE_EQ(in.size(), 2U, "BatchMatMul requires two inputs");
+  CAFFE_ENFORCE_EQ(in.size(), 2U, "FPGAMatMul requires two inputs");
 
   ArgumentHelper helper(def);
   struct OpSchema::Cost c;
   const auto& A = in[0];
   const auto& B = in[1];
-  const TensorShape Y = TensorInferenceForBatchMatMul(def, in)[0];
+  const TensorShape Y = TensorInferenceForFPGAMatMul(def, in)[0];
 
   uint64_t nElemA = nElemFromDim(A);
   uint64_t nElemB = nElemFromDim(B);
@@ -119,11 +119,11 @@ OpSchema::Cost CostInferenceForBatchMatMul(
   return c;
 }
 
-OPERATOR_SCHEMA(BatchMatMul)
+OPERATOR_SCHEMA(FPGAMatMul)
     .NumInputs(2)
     .NumOutputs(1)
     .SetDoc(R"DOC(
-Batch Matrix multiplication Yi = Ai * Bi, where A has shape (dim0, dim1, ... M, K),
+FPGA Matrix multiplication Yi = Ai * Bi, where A has shape (dim0, dim1, ... M, K),
 B has shape (dim0, dim1, ... K, N), Y has shape (dim0, dim1, ... M, N) and i ranges
 from 0 to (dim0 * dim1 ...) - 1. rank(A) == rank(B) >= 2. In case of A and B being
 two dimensional, it behaves like normal matrix multiplication.
@@ -142,12 +142,12 @@ two dimensional, it behaves like normal matrix multiplication.
     .Arg(
         "broadcast",
         "Pass 1 to allow broadcasting of dimensions. Behavior is the same as numpy.matmul. Gradient is currently not supported when running in broadcast mode.")
-    .TensorInferenceFunction(TensorInferenceForBatchMatMul)
+    .TensorInferenceFunction(TensorInferenceForFPGAMatMul)
     .CostInferenceFunction(
-        OpSchema::CostInferenceFunctionType(CostInferenceForBatchMatMul))
+        OpSchema::CostInferenceFunctionType(CostInferenceForFPGAMatMul))
     .InheritOnnxSchema();
 
-class GetBatchMatMulGradient : public GradientMakerBase {
+class GetFPGAMatMulGradient : public GradientMakerBase {
   using GradientMakerBase::GradientMakerBase;
   vector<OperatorDef> GetGradientDefs() override {
     CAFFE_ENFORCE_EQ(def_.input_size(), 2);
@@ -159,7 +159,7 @@ class GetBatchMatMulGradient : public GradientMakerBase {
     CAFFE_ENFORCE(
         !broadcast,
         "Gradient is currently not supported with "
-        "broadcast=1 for BatchMatMul.");
+        "broadcast=1 for FPGAMatMul.");
 
     bool trans_a = 0;
     bool trans_b = 0;
@@ -182,13 +182,13 @@ class GetBatchMatMulGradient : public GradientMakerBase {
         // A'B':
         // dA = B'G', dB = G'A'
         return vector<OperatorDef>{CreateOperatorDef(
-                                       "BatchMatMul",
+                                       "FPGAMatMul",
                                        "",
                                        vector<string>{I(1), GO(0)},
                                        vector<string>{GI(0)},
                                        trans_both_arg),
                                    CreateOperatorDef(
-                                       "BatchMatMul",
+                                       "FPGAMatMul",
                                        "",
                                        vector<string>{GO(0), I(0)},
                                        vector<string>{GI(1)},
@@ -197,13 +197,13 @@ class GetBatchMatMulGradient : public GradientMakerBase {
         // A'B:
         // dA = BG', dB = AG
         return vector<OperatorDef>{CreateOperatorDef(
-                                       "BatchMatMul",
+                                       "FPGAMatMul",
                                        "",
                                        vector<string>{I(1), GO(0)},
                                        vector<string>{GI(0)},
                                        trans_b_arg),
                                    CreateOperatorDef(
-                                       "BatchMatMul",
+                                       "FPGAMatMul",
                                        "",
                                        vector<string>{I(0), GO(0)},
                                        vector<string>{GI(1)},
@@ -214,13 +214,13 @@ class GetBatchMatMulGradient : public GradientMakerBase {
         // AB':
         // dA = GB, dB = G'A
         return vector<OperatorDef>{CreateOperatorDef(
-                                       "BatchMatMul",
+                                       "FPGAMatMul",
                                        "",
                                        vector<string>{GO(0), I(1)},
                                        vector<string>{GI(0)},
                                        no_trans_arg),
                                    CreateOperatorDef(
-                                       "BatchMatMul",
+                                       "FPGAMatMul",
                                        "",
                                        vector<string>{GO(0), I(0)},
                                        vector<string>{GI(1)},
@@ -229,13 +229,13 @@ class GetBatchMatMulGradient : public GradientMakerBase {
         // AB:
         // dA = GB', dB = A'G
         return vector<OperatorDef>{CreateOperatorDef(
-                                       "BatchMatMul",
+                                       "FPGAMatMul",
                                        "",
                                        vector<string>{GO(0), I(1)},
                                        vector<string>{GI(0)},
                                        trans_b_arg),
                                    CreateOperatorDef(
-                                       "BatchMatMul",
+                                       "FPGAMatMul",
                                        "",
                                        vector<string>{I(0), GO(0)},
                                        vector<string>{GI(1)},
@@ -249,6 +249,6 @@ class GetBatchMatMulGradient : public GradientMakerBase {
   }
 };
 
-REGISTER_GRADIENT(BatchMatMul, GetBatchMatMulGradient);
+REGISTER_GRADIENT(FPGAMatMul, GetFPGAMatMulGradient);
 
 } // namespace caffe2
