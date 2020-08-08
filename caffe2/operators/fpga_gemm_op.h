@@ -1,4 +1,3 @@
-//from batch_matmul_op.h
 #ifndef CAFFE2_OPERATORS_FPGA_GEMM_OP_H_
 #define CAFFE2_OPERATORS_FPGA_GEMM_OP_H_
 
@@ -15,12 +14,12 @@
 namespace caffe2 {
 
 template <class Context, class Engine = DefaultEngine>
-class BatchMatMulOp final : public Operator<Context> {
+class FPGAMatMulOp final : public Operator<Context> {
  public:
   USE_OPERATOR_CONTEXT_FUNCTIONS;
 
   template <class... Args>
-  explicit FPGAGEMMOp(Args&&... args)
+  explicit FPGAMatMulOp(Args&&... args)
       : Operator<Context>(std::forward<Args>(args)...),
         OP_SINGLE_ARG(bool, "trans_a", trans_a_, false),
         OP_SINGLE_ARG(bool, "trans_b", trans_b_, false),
@@ -66,32 +65,12 @@ class BatchMatMulOp final : public Operator<Context> {
       T* Y_data = Y->template mutable_data<T>();
       if (trans_b_) {
         const int M = B.numel() / N;
-        math::Gemv<T, Context, Engine>(
-            CblasNoTrans, M, N, 1.0f, B_data, A_data, 0.0f, Y_data, &context_);
+        math::Gemm<T, Context, Engine>(CblasNoTrans, CblasTrans, N, M, 1.0f, B_data, A_data, 0.0f, Y_data, &context_);
       } else {
         const int M = B_dims[B_ndim - 1];
         const int batch_size = B.numel() / (M * N);
-        if (batch_size == 1) {
-          math::Gemv<T, Context, Engine>(
-              CblasTrans, N, M, 1.0f, B_data, A_data, 0.0f, Y_data, &context_);
-        } else {
-          math::GemmStridedBatched<T, Context, Engine>(
-              CblasTrans,
-              CblasNoTrans,
-              batch_size,
-              M,
-              1,
-              N,
-              1.0f,
-              B_data,
-              M * N,
-              A_data,
-              0,
-              0.0f,
-              Y_data,
-              M,
-              &context_);
-        }
+        //check here, trans or Notrans
+        math::Gemm<T, Context, Engine>(CblasNoTrans, CblasNoTrans, N, M, 1.0f, B_data, A_data, 0.0f, Y_data, &context_);
       }
       return true;
     }
@@ -109,31 +88,10 @@ class BatchMatMulOp final : public Operator<Context> {
       if (trans_a_) {
         const int M = A_dims[A_ndim - 1];
         const int batch_size = A.numel() / (M * N);
-        if (batch_size == 1) {
-          math::Gemv<T, Context, Engine>(
-              CblasTrans, N, M, 1.0f, A_data, B_data, 0.0f, Y_data, &context_);
-        } else {
-          math::GemmStridedBatched<T, Context, Engine>(
-              CblasTrans,
-              CblasNoTrans,
-              batch_size,
-              M,
-              1,
-              N,
-              1.0f,
-              A_data,
-              M * N,
-              B_data,
-              0,
-              0.0f,
-              Y_data,
-              M,
-              &context_);
-        }
+        math::Gemm<T, Context, Engine>(CblasTrans, CblasNoTrans, N, M, 1.0f, B_data, A_data, 0.0f, Y_data, &context_);
       } else {
         const int M = A.numel() / N;
-        math::Gemv<T, Context, Engine>(
-            CblasNoTrans, M, N, 1.0f, A_data, B_data, 0.0f, Y_data, &context_);
+        math::Gemm<T, Context, Engine>(CblasNoTrans, CblasNoTrans, N, M, 1.0f, B_data, A_data, 0.0f, Y_data, &context_);
       }
       return true;
     }
@@ -142,7 +100,8 @@ class BatchMatMulOp final : public Operator<Context> {
     const int K = trans_a_ ? A_dims[A_ndim - 2] : A_dims[A_ndim - 1];
     if (trans_b_) {
       CAFFE_ENFORCE_EQ(B_dims[B_ndim - 1], K);
-    } else {
+    }
+    else {
       CAFFE_ENFORCE_EQ(B_dims[B_ndim - 2], K);
     }
     const int N = trans_b_ ? B_dims[B_ndim - 2] : B_dims[B_ndim - 1];
@@ -203,114 +162,9 @@ class BatchMatMulOp final : public Operator<Context> {
           0.0f,
           Y_data,
           &context_);
-    } else if (A_batch_size == 1) {
-      if (M == 1 && trans_b_) {
-        math::Gemv<T, Context, Engine>(
-            CblasNoTrans,
-            B_batch_size * N,
-            K,
-            1.0f,
-            B_data,
-            A_data,
-            0.0f,
-            Y_data,
-            &context_);
-      } else {
-        math::GemmStridedBatched<T, Context, Engine>(
-            trans_a_ ? CblasTrans : CblasNoTrans,
-            trans_b_ ? CblasTrans : CblasNoTrans,
-            Y_batch_size,
-            M,
-            N,
-            K,
-            1.0f,
-            A_data,
-            0,
-            B_data,
-            K * N,
-            0.0f,
-            Y_data,
-            M * N,
-            &context_);
-      }
-    } else if (B_batch_size == 1) {
-      if (!trans_a_) {
-        math::Gemm<T, Context, Engine>(
-            CblasNoTrans,
-            trans_b_ ? CblasTrans : CblasNoTrans,
-            A_batch_size * M,
-            N,
-            K,
-            1.0f,
-            A_data,
-            B_data,
-            0.0f,
-            Y_data,
-            &context_);
-      } else {
-        math::GemmStridedBatched<T, Context, Engine>(
-            CblasTrans,
-            trans_b_ ? CblasTrans : CblasNoTrans,
-            Y_batch_size,
-            M,
-            N,
-            K,
-            1.0f,
-            A_data,
-            M * K,
-            B_data,
-            0,
-            0.0f,
-            Y_data,
-            M * N,
-            &context_);
-      }
-    } else if (!is_broadcast_dims) {
-      math::GemmStridedBatched<T, Context, Engine>(
-          trans_a_ ? CblasTrans : CblasNoTrans,
-          trans_b_ ? CblasTrans : CblasNoTrans,
-          Y_batch_size,
-          M,
-          N,
-          K,
-          1.0f,
-          A_data,
-          M * K,
-          B_data,
-          K * N,
-          0.0f,
-          Y_data,
-          M * N,
-          &context_);
-    } else {
-      std::vector<const T*> A_ptr(Y_batch_size);
-      std::vector<const T*> B_ptr(Y_batch_size);
-      std::vector<T*> Y_ptr(Y_batch_size);
-      std::vector<std::int64_t> index(batch_dim);
-      for (std::int64_t i = 0; i < Y_batch_size; ++i) {
-        const std::int64_t A_index = math::utils::GetIndexFromDims(
-            batch_dim, A_broadcast_dims.data(), index.data());
-        const std::int64_t B_index = math::utils::GetIndexFromDims(
-            batch_dim, B_broadcast_dims.data(), index.data());
-        A_ptr[i] = A_data + A_index * M * K;
-        B_ptr[i] = B_data + B_index * K * N;
-        Y_ptr[i] = Y_data + i * M * N;
-        math::utils::IncreaseIndexInDims(
-            batch_dim, Y_broadcast_dims.data(), index.data());
-      }
-      math::GemmBatched<T, Context, Engine>(
-          trans_a_ ? CblasTrans : CblasNoTrans,
-          trans_b_ ? CblasTrans : CblasNoTrans,
-          Y_batch_size,
-          M,
-          N,
-          K,
-          1.0f,
-          A_ptr.data(),
-          B_ptr.data(),
-          0.0f,
-          Y_ptr.data(),
-          &context_);
+    }
+    else{
+      std::cout<<"feature yet undefined"<<std::endl;
     }
     return true;
   }
@@ -323,4 +177,4 @@ class BatchMatMulOp final : public Operator<Context> {
 
 } // namespace caffe2
 
-#endif // CAFFE2_OPERATORS_BATCH_MATMUL_OP_H_
+#endif
