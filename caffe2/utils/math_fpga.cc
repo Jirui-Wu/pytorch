@@ -418,7 +418,7 @@ C10_EXPORT void Gemv<float, CPUContext>(
 CAFFE2_SPECIALIZED_DOT(float)
 #undef CAFFE2_SPECIALIZED_DOT
 
-#endif // CAFFE2_USE_EIGEN_FOR_BLAS
+#endif // CAFFE2_USE_MKL
 
 template <>
 C10_EXPORT void GemmBatched<float, CPUContext>(
