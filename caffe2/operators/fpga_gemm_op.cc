@@ -1,4 +1,4 @@
-FPGA#include "caffe2/operators/fpga_gemm_op.h"
+#include "caffe2/operators/fpga_gemm_op.h"
 #include "caffe2/fpga/xcl2.hpp"
 //need to ask how fpga works, is this header file enough?
 
