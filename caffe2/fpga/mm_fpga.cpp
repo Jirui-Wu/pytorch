@@ -40,48 +40,48 @@ void Kernel(
     tiling.Start();
     #endif
 
-    std::vector<float, aligned_allocator<float> > aVec;
-    int aParams[2];
-	TransformToFlattenTiledLayout(
-        aVecIn,
-        aVec,
-        aParams,
-        aRow,
-        aCol,
-        TILE_ROW,
-        TILE_COMMON,
-        false,
-        transA
-    );
+  //   std::vector<float, aligned_allocator<float> > aVec;
+  //   int aParams[2];
+	// TransformToFlattenTiledLayout(
+  //       aVecIn,
+  //       aVec,
+  //       aParams,
+  //       aRow,
+  //       aCol,
+  //       TILE_ROW,
+  //       TILE_COMMON,
+  //       false,
+  //       transA
+  //   );
 
-
-    std::vector<float, aligned_allocator<float> > bVec;
-    int bParams[2];
-	TransformToFlattenTiledLayout(
-        bVecIn,
-        bVec,
-        bParams,
-        bRow,
-        bCol,
-        TILE_COMMON,
-        TILE_COL,
-        true,
-        transB
-    );
-
+  //
+  //   std::vector<float, aligned_allocator<float> > bVec;
+  //   int bParams[2];
+	// TransformToFlattenTiledLayout(
+  //       bVecIn,
+  //       bVec,
+  //       bParams,
+  //       bRow,
+  //       bCol,
+  //       TILE_COMMON,
+  //       TILE_COL,
+  //       true,
+  //       transB
+  //   );
+  //
     std::vector<float, aligned_allocator<float> > cVec;
-    int cRow = aParams[0] * TILE_ROW;
-    int cCol = bParams[0] * TILE_COL;
-    for (int i=0; i<cRow * cCol; i++)
-    {
-        cVec.push_back(0);
-    }
-
-    std::vector<int, aligned_allocator<int> > params(4);
-    params[0] = aParams[0];
-    params[1] = bParams[0];
-    params[2] = aParams[1];
-    params[3] = 0;
+  //   int cRow = aParams[0] * TILE_ROW;
+  //   int cCol = bParams[0] * TILE_COL;
+  //   for (int i=0; i<cRow * cCol; i++)
+  //   {
+  //       cVec.push_back(0);
+  //   }
+  //
+  //   std::vector<int, aligned_allocator<int> > params(4);
+  //   params[0] = aParams[0];
+  //   params[1] = bParams[0];
+  //   params[2] = aParams[1];
+  //   params[3] = 0;
 
     #ifdef PROFILING_TIME
     tilingTime += tiling.MicroSeconds();
@@ -150,15 +150,15 @@ void Kernel(
     tiling.Start();
     #endif
 
-    TransformToMatrixLayoutFunc(
-        cVec,
-        cVecOut,
-        TILE_ROW,
-        TILE_COL,
-        aRow,
-        bCol,
-        false
-    );
+    // TransformToMatrixLayoutFunc(
+    //     cVec,
+    //     cVecOut,
+    //     TILE_ROW,
+    //     TILE_COL,
+    //     aRow,
+    //     bCol,
+    //     false
+    // );
 
     # ifdef PROFILING_TIME
     tilingTime += tiling.MicroSeconds();
